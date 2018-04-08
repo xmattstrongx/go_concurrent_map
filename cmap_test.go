@@ -2,10 +2,16 @@ package go_concurrent_map
 
 import (
 	"testing"
+	"time"
 )
 
 func Test_concurrentmap_Set(t *testing.T) {
-	c := NewConcurrentMap()
+	// c := NewConcurrentMap()
+	c := New().
+		WithDefaultExpiration(30 * time.Second).
+		WithPurgeInterval(30 * time.Second).
+		Build()
+
 	type args struct {
 		key   string
 		value []byte
