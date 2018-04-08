@@ -1,6 +1,7 @@
 package go_concurrent_map
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -80,4 +81,27 @@ func (c *Concurrentmap) Delete(key string) {
 	c.mtx.Lock()
 	delete(c.internal, key)
 	c.mtx.Unlock()
+}
+
+func (c *Concurrentmap) PurgeExpiredEntries(ctx context.Context) {
+	retry := time.After(0)
+
+	for {
+		select {
+		case <-retry:
+			retry = time.After(c.purgeInterval)
+			c.mtx.RLock()
+			for k, v := range c.internal {
+				if v.Expiration > 0 && time.Since(v.setTime) > v.Expiration {
+					c.mtx.RUnlock()
+					c.Delete(k)
+					c.mtx.RLock()
+				}
+			}
+			c.mtx.RUnlock()
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
