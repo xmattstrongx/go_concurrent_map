@@ -90,15 +90,17 @@ func (c *Concurrentmap) PurgeExpiredEntries(ctx context.Context) {
 		select {
 		case <-retry:
 			retry = time.After(c.purgeInterval)
+			keysToBeDelete := make(map[string]struct{})
 			c.mtx.RLock()
 			for k, v := range c.internal {
 				if v.Expiration > 0 && time.Since(v.setTime) > v.Expiration {
-					c.mtx.RUnlock()
-					c.Delete(k)
-					c.mtx.RLock()
+					keysToBeDelete[k] = struct{}{}
 				}
 			}
 			c.mtx.RUnlock()
+			for k := range keysToBeDelete {
+				c.Delete(k)
+			}
 
 		case <-ctx.Done():
 			return
