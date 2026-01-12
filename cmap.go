@@ -2,6 +2,7 @@ package go_concurrent_map
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -14,15 +15,16 @@ type Concurrentmap struct {
 }
 
 type Entry struct {
-	Expiration time.Duration
-	Value      []byte
-	setTime    time.Time
+	KeyExpiration time.Duration
+	Value         []byte
+	timeCreated   time.Time
+	NeverExpire   bool
 }
 
 type ConcurrentMapBuilder interface {
 	WithPurgeInterval(interval time.Duration) ConcurrentMapBuilder
 	WithDefaultExpiration(interval time.Duration) ConcurrentMapBuilder
-	Build() *Concurrentmap
+	Build() (*Concurrentmap, error)
 }
 
 type concurrentMapBuilder struct {
@@ -44,12 +46,16 @@ func (c *concurrentMapBuilder) WithDefaultExpiration(interval time.Duration) Con
 	return c
 }
 
-func (c *concurrentMapBuilder) Build() *Concurrentmap {
+func (c *concurrentMapBuilder) Build() (*Concurrentmap, error) {
+	if c.purgeInterval <= 0 {
+		return nil, fmt.Errorf("map purge interval time must be set")
+	}
+
 	return &Concurrentmap{
 		internal:          make(map[string]Entry),
 		defaultExpiration: c.defaultExpiration,
 		purgeInterval:     c.purgeInterval,
-	}
+	}, nil
 }
 
 func (c *Concurrentmap) Get(key string) (value []byte, ok bool) {
@@ -66,12 +72,19 @@ func (c *Concurrentmap) GetEntry(key string) (entry Entry, ok bool) {
 
 func (c *Concurrentmap) Set(key string, value []byte) {
 	c.SetEntry(key, Entry{
-		setTime: time.Now(),
-		Value:   value,
+		KeyExpiration: c.defaultExpiration,
+		timeCreated:   time.Now(),
+		Value:         value,
 	})
 }
 
 func (c *Concurrentmap) SetEntry(key string, e Entry) {
+	if e.NeverExpire || e.KeyExpiration == 0 {
+		e.KeyExpiration = 0
+	}
+
+	e.timeCreated = time.Now()
+
 	c.mtx.Lock()
 	c.internal[key] = e
 	c.mtx.Unlock()
@@ -84,7 +97,7 @@ func (c *Concurrentmap) Delete(key string) {
 }
 
 func (c *Concurrentmap) PurgeExpiredEntries(ctx context.Context) {
-	retry := time.After(0)
+	retry := time.After(c.purgeInterval)
 
 	for {
 		select {
@@ -93,7 +106,7 @@ func (c *Concurrentmap) PurgeExpiredEntries(ctx context.Context) {
 			keysToBeDelete := make(map[string]struct{})
 			c.mtx.RLock()
 			for k, v := range c.internal {
-				if v.Expiration > 0 && time.Since(v.setTime) > v.Expiration {
+				if v.KeyExpiration > 0 && time.Since(v.timeCreated) > v.KeyExpiration {
 					keysToBeDelete[k] = struct{}{}
 				}
 			}
